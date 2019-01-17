@@ -1,5 +1,5 @@
-time mandelbrot -r 1024 -c 1024 -x -1 -X 1 -y -1 -Y 1
-time mandelbrot -r 1024 -c 1024 -x -1 -X -.5 -y -0.25 -Y 0.25
-time mandelbrot -r 512 -c 512 -x -0.875 -X -.625 -y -0.125 -Y 0.125
-time mandelbrot -r 512 -c 512 -x -0.8 -X -0.7 -y 0 -Y 0.1
-time mandelbrot -r 512 -c 512 -x -0.775 -X -0.725 -y 0.05 -Y 0.1 -m 2048
+time ./mandelbrot -r 1024 -c 1024 -x -1 -X 1 -y -1 -Y 1
+time ./mandelbrot -r 1024 -c 1024 -x -1 -X -.5 -y -0.25 -Y 0.25
+time ./mandelbrot -r 512 -c 512 -x -0.875 -X -.625 -y -0.125 -Y 0.125
+time ./mandelbrot -r 512 -c 512 -x -0.8 -X -0.7 -y 0 -Y 0.1
+time ./mandelbrot -r 512 -c 512 -x -0.775 -X -0.725 -y 0.05 -Y 0.1 -m 2048

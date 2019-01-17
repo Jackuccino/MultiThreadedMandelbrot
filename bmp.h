@@ -33,7 +33,7 @@ class Bmp_c
             core_header.num_colors = 0;         // defaults to 2^bpp
             core_header.num_important_colors = 0;
 
-            int image_size = Row_Size() * cols;
+            int image_size = Row_Size() * rows;
             core_header.image_size = image_size;
 
             base_header.header = 0x4D42; // "BM"
@@ -55,7 +55,7 @@ class Bmp_c
         // Destructor
         ~Bmp_c() 
         { 
-            delete pixels; 
+            delete []pixels; 
         }
 
         //********************************************
@@ -143,4 +143,3 @@ class Bmp_c
                    + sizeof(pallet);
         }
 };
-

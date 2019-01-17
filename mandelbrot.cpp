@@ -1,16 +1,34 @@
 //*****************************************************
 // Compute mandelbrot set images
 //
-// Author: Phil Howard
+// Author: Phil Howard & JinJie Xu
 //*****************************************************
 
 #include <complex>
+using std::complex;
 #include <stdio.h>      // BMP output uses C IO not C++
 #include <unistd.h>     // for getopt
+#include <pthread.h>    // use for multi-threading
+#include <queue>
+using std::queue;
 
 #include "bmp.h"        // class for creating BMP files
+#include "palette.h"    // class for different color combo
 
-using std::complex;
+typedef struct
+{
+    pthread_t id;
+    pthread_mutex_t *mutex;
+    queue<int> *work_queue;
+    int total_row;
+    int total_col;
+    long double start_x;
+    long double end_x;
+    long double start_y;
+    long double end_y;
+    int max_iters;
+    Bmp_c *image;
+} thread_arg_t;
 
 //*****************************************************
 // Determine if a single point is in the mandelbrot set.
@@ -27,7 +45,8 @@ int ComputeMandelbrot(long double x, long double y, int max_iters)
     for (int ii=0; ii<max_iters; ii++)
     {
         z = z*z + c;
-        if (std::abs(z) >= 2.0) return ii+1;
+        if (std::abs(z) >= 2.0)
+            return ii+1;
     }
 
     return 0;
@@ -65,6 +84,64 @@ inline int ColorizeScaled(int value, int max_value)
     return value;
 }
 
+//*****************************************************
+// Work for each thread
+// Params:
+//    param: it's the struct "thread_arg_t" defined above
+//
+// Return:
+//    nullptr
+void *ThreadFunc(void *param)
+{
+    long double x,y,value;
+    int row;
+
+    thread_arg_t *args = static_cast<thread_arg_t*>(param);
+
+    // Lock before accessing queue
+    if (pthread_mutex_lock(args->mutex) != 0) 
+        pthread_exit((void *)-1);
+
+    // loop if the queue is not empty: means the image is not done
+    while (!args->work_queue->empty())
+    {
+        // Get a row from the queue
+        row = args->work_queue->front();
+        args->work_queue->pop();
+
+        // Unlock when done accessing queue
+        if (pthread_mutex_unlock(args->mutex) != 0)
+            pthread_exit((void *)-1);
+
+        // Get one row done, and go back to get another row
+        y = args->start_y + 
+            (args->end_y - args->start_y)/args->total_row * row;
+            
+        for (int col = 0; col < args->total_col; col++)
+        {
+            x = args->start_x + 
+                (args->end_x - args->start_x)/args->total_col * col;
+            
+            // Here is where valgrind is waiting forever
+            value = ComputeMandelbrot(x, y, args->max_iters);
+
+            // colorize and set the pixel
+            value = ColorizeScaled(value, args->max_iters);
+            args->image->Set_Pixel(row, col, value);
+        }
+
+        // Lock again before checking empty
+        if (pthread_mutex_lock(args->mutex) != 0) 
+            pthread_exit((void *)-1);
+    }
+
+    // Release the lock when the thread is done
+    if (pthread_mutex_unlock(args->mutex) != 0)
+        pthread_exit((void *)-1);
+
+    pthread_exit(0);
+}
+
 static const char *HELP_STRING = 
     "mandelbrot <options> where <options> can be the following\n"
     "   -h print this help string\n"
@@ -95,15 +172,20 @@ static const char *HELP_STRING =
 int main(int argc, char** argv)
 {
     int max_iters = 1024;
-    //int num_threads = 1;
+    int num_threads = 1;
     int rows = 256;
     int cols = 256;
     long double start_x = -2.0;
     long double end_x = 2.0;
     long double start_y = -2.0;
     long double end_y = 2.0;
+    queue<int> work_queue;
+    Palette palette;
 
-    long double x,y,value;
+    // Create argument for each thread
+    thread_arg_t *args;
+    // Create a pthread mutex
+    pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 
     int opt;
 
@@ -134,7 +216,7 @@ int main(int argc, char** argv)
                 max_iters = atoi(optarg);
                 break;
             case 'n':
-                //num_threads = atoi(optarg);
+                num_threads = atoi(optarg);
                 break;
             case 'h':
                 printf(HELP_STRING);
@@ -144,28 +226,52 @@ int main(int argc, char** argv)
         }
     }
 
+    // Fill the queue with rows
+    for (int i = 0; i < rows; i++)
+    {
+        work_queue.push(i);
+    }
+
     // create and compute the image
     Bmp_c image(rows, cols);
 
-    for (int row=0; row<rows; row++)
+    args = new thread_arg_t[num_threads];
+    
+    // create threads
+    for (int i = 0; i < num_threads; i++)
     {
-        y = start_y + (end_y - start_y)/rows * row;
-        for (int col=0; col<cols; col++)
-        {
-            x = start_x + (end_x - start_x)/cols * col;
-            value = ComputeMandelbrot(x, y, max_iters);
+        args[i].work_queue = &work_queue;
+        args[i].mutex = &mutex;
+        args[i].total_row = rows;
+        args[i].total_col = cols;
+        args[i].start_x = start_x;
+        args[i].end_x = end_x;
+        args[i].start_y = start_y;
+        args[i].end_y = end_y;
+        args[i].max_iters = max_iters;
+        args[i].image = &image;
 
-            // colorize and set the pixel
-            value = ColorizeScaled(value, max_iters);
-            image.Set_Pixel(row, col, value);
-        }
+        if (pthread_create(&args[i].id, nullptr, 
+            ThreadFunc, &args[i]) != 0)
+            return -1;
     }
+
+    // Wait for threads to finish
+    for (int i = 0; i < num_threads; i++)
+    {
+        if (pthread_join(args[i].id, nullptr) != 0)
+            return -1;
+    }
+
+    delete[] args;
 
     // define the pallet
     uint32_t pallet[256];
     for (int ii=0; ii<256; ii++)
     {
-        pallet[ii] = Bmp_c::Make_Color(ii, 0, ii);
+        Color color(palette.GetColor(ii % palette.Count()));
+        pallet[ii] = 
+            Bmp_c::Make_Color(color.R(), color.G(), color.B());
     }
 
     image.Set_Pallet(pallet);
@@ -181,4 +287,3 @@ int main(int argc, char** argv)
 
     return 0;
 }
-
